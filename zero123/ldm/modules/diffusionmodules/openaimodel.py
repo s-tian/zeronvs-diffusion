@@ -775,6 +775,48 @@ class UNetModel(nn.Module):
             return self.id_predictor(h)
         else:
             return self.out(h)
+    
+    def forward_get_features(self, x, timesteps=None, context=None, y=None,**kwargs):
+        """
+        Apply the model to an input batch.
+        :param x: an [N x C x ...] Tensor of inputs.
+        :param timesteps: a 1-D batch of timesteps.
+        :param context: conditioning plugged in via crossattn
+        :param y: an [N] Tensor of labels, if class-conditional.
+        :return: a list of intermediate [N x C x ...] Tensors of outputs.
+        """
+        assert (y is not None) == (
+            self.num_classes is not None
+        ), "must specify y if and only if the model is class-conditional"
+        hs = []
+        intermediate_features = []
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        emb = self.time_embed(t_emb)
+
+        if self.num_classes is not None:
+            assert y.shape == (x.shape[0],)
+            emb = emb + self.label_emb(y)
+
+        h = x.type(self.dtype)
+        # print("Input blocks begin")
+        for module in self.input_blocks:
+            h = module(h, emb, context)
+            # print(h.shape)
+            hs.append(h)
+            intermediate_features.append(h.clone())  # Clone to store the state at this point
+        # print("Middle block")
+        h = self.middle_block(h, emb, context)
+        # print(h.shape)
+        intermediate_features.append(h.clone())  # Clone to store the state at this point
+        # print("Output blocks")
+        for module in self.output_blocks:
+            h = th.cat([h, hs.pop()], dim=1)
+            h = module(h, emb, context)
+            # print(h.shape)
+            intermediate_features.append(h.clone())  # Clone to store the state at this point
+        h = h.type(x.dtype)
+        intermediate_features.append(h.clone())  # Clone to store the final output state
+        return intermediate_features
 
 
 class EncoderUNetModel(nn.Module):

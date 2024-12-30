@@ -11,6 +11,7 @@ import functools
 import json
 import math
 import os
+import glob
 from google.cloud import storage
 import collections
 import gc
@@ -30,7 +31,8 @@ import scipy
 from ldm.data import webdataset_base
 from ldm.data import webdataset_co3d
 from ldm.data import webdataset_re10k
-
+from ldm.data import droid
+from ldm.data import robosuite
 
 warnings.filterwarnings(action="ignore", category=UserWarning, module="google")
 warnings.filterwarnings(action="ignore", category=DeprecationWarning, module="scipy")
@@ -166,7 +168,6 @@ def _compute_n_batches(config):
         world_size = torch.distributed.get_world_size()
     except:
         world_size = 1
-
     n_pairs = int(
         config["dataset_n_scenes"]
         / world_size
@@ -176,6 +177,65 @@ def _compute_n_batches(config):
     )
     n_batches = int(n_pairs // config["batch_size"])
     return n_batches
+
+
+def get_droid_dataset(
+    dataset_path,
+    dataset_n_shards,
+    rate,
+    dataset_name,
+    resampled=True,
+    compute_nearplane_quantile=False,
+    **kwargs,
+):
+
+    all_file_paths = [os.path.join(dataset_path, f"data_{idx}.h5") for idx in range(dataset_n_shards)]
+    print("all droid file paths", all_file_paths)
+    try:
+        print(torch.distributed.get_rank(), torch.distributed.get_world_size())
+        file_paths = split_by_node(all_file_paths)
+        assert len(file_paths) > 0
+    except RuntimeError:
+        print("Must initialize DDP for node sharding.")
+        file_paths = all_file_paths
+    except AssertionError:
+        print("Node got 0 shards, falling back to full dataset.")
+        file_paths = all_file_paths
+    dataset = droid.IterableDroidDataset(file_paths, compute_nearplane_quantile=compute_nearplane_quantile, **kwargs)
+    return dataset
+
+
+def get_robosuite_dataset(
+    dataset_path,
+    dataset_n_shards,
+    rate,
+    dataset_name,
+    get_all_h5_from_directory=False,
+    resampled=True,
+    compute_nearplane_quantile=False,
+    **kwargs,
+):
+    if get_all_h5_from_directory:
+        # dataset_path is a path to a directory, and we are going to load all files from it, each as a shard
+        all_file_paths = glob.glob(f"{dataset_path}/*.hdf5")
+        print("Found the following data files in directory: ")
+        print(all_file_paths)
+    else:
+        # dataset_path is a path to a single file, and we are just going to load it
+        all_file_paths = [dataset_path]
+    print("all droid file paths", all_file_paths)
+    try:
+        print(torch.distributed.get_rank(), torch.distributed.get_world_size())
+        file_paths = split_by_node(all_file_paths)
+        assert len(file_paths) > 0
+    except RuntimeError:
+        print("Must initialize DDP for node sharding.")
+        file_paths = all_file_paths
+    except AssertionError:
+        print("Node got 0 shards, falling back to full dataset.")
+        file_paths = all_file_paths
+    dataset = robosuite.IterableRobosuiteDataset(file_paths, compute_nearplane_quantile=compute_nearplane_quantile, **kwargs)
+    return dataset
 
 
 def get_dataset(
@@ -283,7 +343,6 @@ class SampleEquallyBatched(wds.DataPipeline, wds.compat.FluidInterface):
     def __iter__(self):
         sources = [iter(ds) for ds in self.datasets]
         worker_info = torch.utils.data.get_worker_info()
-
         while True:
             try:
                 dataset_idxs = np.random.choice(
@@ -304,9 +363,9 @@ class SampleEquallyBatched(wds.DataPipeline, wds.compat.FluidInterface):
                 batch = filters.default_collation_fn(items)
                 yield batch
             except StopIteration:
+                print("Stopiteration")
                 return
-
-
+           
 def get_loader(
     num_workers,
     batch_size,
@@ -325,10 +384,16 @@ def get_loader(
 
     # import pdb
     # pdb.set_trace()
-    datasets = [
-        get_dataset(**dataset_config, shuffle_buffer_size=shuffle_buffer_size)
-        for dataset_config in dataset_configs
-    ]
+    datasets = []
+    for dataset_config in dataset_configs:
+        if dataset_config["dataset_name"] == "droid":
+            dset = get_droid_dataset(**dataset_config)
+        elif dataset_config["dataset_name"] == "robosuite":
+            dset = get_robosuite_dataset(**dataset_config)
+        else:
+            dset = get_dataset(**dataset_config, shuffle_buffer_size=shuffle_buffer_size)
+        datasets.append(dset)
+
     n_batches_all = [
         _compute_n_batches(dataset_config) for dataset_config in dataset_configs
     ]

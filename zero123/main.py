@@ -941,7 +941,7 @@ if __name__ == "__main__":
 
         remote_dir = logdir
         local_dir = os.path.join(
-            "/home/jupyter/enter_the_photo_diffusion/zero123/logs", nowname
+            "/viscam/projects/vipl/nextnvs/zeronvs_diffusion/zero123/logs", nowname
         )
 
         logdir_callback = MirroredLogdirCallback(
@@ -1084,7 +1084,7 @@ if __name__ == "__main__":
                 },
             },
         }
-        default_logger_cfg = default_logger_cfgs["testtube"]
+        default_logger_cfg = default_logger_cfgs["wandb"]
         if "logger" in lightning_config:
             logger_cfg = lightning_config.logger
         else:

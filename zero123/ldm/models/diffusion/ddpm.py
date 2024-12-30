@@ -788,13 +788,27 @@ class DDPM(pl.LightningModule):
         }
         directory = "/home/jupyter/tmp_imgs/"
 
-        if batch_idx == 0:
-            for key in image_dict:
-                self.logger.experiment.add_images(
-                    key, image_dict[key], self.global_step
-                )
+        # ST: comment for now, doesn't seem to work with wandb
+        # if batch_idx == 0:
+            # for key in image_dict:
+                # self.logger.experiment.add_images(
+                    # key, image_dict[key], self.global_step
+                # )
             # import pdb
             # pdb.set_trace()
+        if batch_idx == 0:
+            import wandb
+            import torchvision
+            from PIL import Image
+            for key in image_dict:
+                image_grid = torchvision.utils.make_grid(torch.tensor(image_dict[key][:8]), nrow=2).cpu().numpy()
+                image_grid = Image.fromarray((np.transpose(image_grid, (1, 2, 0)) * 255.).astype(np.uint8))
+                # image_grid.save("/viscam/projects/vipl/testing.png")
+                # import pdb; pdb.set_trace()
+                self.logger.experiment.log(
+                    {key: wandb.Image(image_grid, file_type="jpg")}, commit=False
+                )
+            
 
         psnr = peak_signal_noise_ratio(gt_target_im, pred_target_im, data_range=1.0)
         ssims = [
@@ -928,9 +942,11 @@ class LatentDiffusion(DDPM):
         scale_factor=1.0,
         scale_by_std=False,
         unet_trainable=True,
+        optimizer_name="adamw",
         *args,
         **kwargs,
     ):
+        self.optimizer_name = optimizer_name
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
         assert self.num_timesteps_cond <= kwargs["timesteps"]
@@ -2256,14 +2272,27 @@ class LatentDiffusion(DDPM):
         if self.cc_projection is not None:
             params = params + list(self.cc_projection.parameters())
             print("========== optimizing for cc projection weight ==========")
+        if self.optimizer_name == "adamw":
+            print("Using AdamW optimizer")
+            opt = torch.optim.AdamW(
+                [
+                    {"params": self.model.parameters(), "lr": lr},
+                    {"params": self.cc_projection.parameters(), "lr": 10.0 * lr},
+                ],
+                lr=lr,
+            )
+        elif self.optimizer_name == "adam":
+            print("Using Adam optimizer")
+            opt = torch.optim.Adam(
+                [
+                    {"params": self.model.parameters(), "lr": lr},
+                    {"params": self.cc_projection.parameters(), "lr": 10.0 * lr},
+                ],
+                lr=lr,
+            )
+        else:
+            raise NotImplementedError(f"Optimizer {self.optimizer_name} not implemented!")
 
-        opt = torch.optim.AdamW(
-            [
-                {"params": self.model.parameters(), "lr": lr},
-                {"params": self.cc_projection.parameters(), "lr": 10.0 * lr},
-            ],
-            lr=lr,
-        )
         if self.use_scheduler:
             assert "target" in self.scheduler_config
             scheduler = instantiate_from_config(self.scheduler_config)

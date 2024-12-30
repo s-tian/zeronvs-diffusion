@@ -123,11 +123,11 @@ def _get_relative_transformations(batch, scales):
 
 def load_depth_model(depth_model_name):
     if depth_model_name == "midas":
-        # depth_repo = "isl-org/MiDaS"
-        depth_repo = "/home/jupyter/.cache/torch/hub/isl-org_MiDaS_master"
+        depth_repo = "isl-org/MiDaS"
+        # depth_repo = "/home/jupyter/.cache/torch/hub/isl-org_MiDaS_master"
         depth_arch = "DPT_SwinV2_T_256"
         depth_model = torch.hub.load(
-            depth_repo, depth_arch, pretrained=True, source="local"
+            depth_repo, depth_arch, pretrained=True, source="github" # switched from local for cached version
         )
         depth_model = depth_model.eval()
         return depth_model
